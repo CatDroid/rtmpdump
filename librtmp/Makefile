@@ -1,6 +1,12 @@
 VERSION=v2.4
 
-prefix=/usr/local
+#不能有空格在后面
+ARCH=armv8a
+CROSS_COMPILE=aarch64-linux-android-
+#SYS=posix
+SYS=android
+
+prefix=$(shell pwd)/android/$(ARCH)
 
 incdir=$(prefix)/include/librtmp
 bindir=$(prefix)/bin
@@ -15,8 +21,9 @@ CC=$(CROSS_COMPILE)gcc
 LD=$(CROSS_COMPILE)ld
 AR=$(CROSS_COMPILE)ar
 
-SYS=posix
-CRYPTO=OPENSSL
+
+CRYPTO=
+#CRYPTO=OPENSSL
 #CRYPTO=GNUTLS
 DEF_POLARSSL=-DUSE_POLARSSL
 DEF_OPENSSL=-DUSE_OPENSSL
@@ -27,6 +34,7 @@ REQ_OPENSSL=libssl,libcrypto
 PUB_GNUTLS=-lgmp
 LIBZ=-lz
 LIBS_posix=
+LIBS_android=
 LIBS_darwin=
 LIBS_mingw=-lws2_32 -lwinmm -lgdi32
 LIB_GNUTLS=-lgnutls -lhogweed -lnettle -lgmp $(LIBZ)
@@ -40,25 +48,31 @@ PUBLIC_LIBS=$(PUB_$(CRYPTO))
 
 SO_VERSION=1
 SOX_posix=so
+SOX_android=so
 SOX_darwin=dylib
 SOX_mingw=dll
 SOX=$(SOX_$(SYS))
 SO_posix=.$(SOX).$(SO_VERSION)
+#android不需要要版本号
+SO_android=.$(SOX)
 SO_darwin=.$(SO_VERSION).$(SOX)
 SO_mingw=-$(SO_VERSION).$(SOX)
 SO_EXT=$(SO_$(SYS))
 
+SODIR_android=$(LIBDIR)
 SODIR_posix=$(LIBDIR)
 SODIR_darwin=$(LIBDIR)
 SODIR_mingw=$(BINDIR)
 SODIR=$(SODIR_$(SYS))
 
+SO_LDFLAGS_android=-shared -Wl,-soname,$@
 SO_LDFLAGS_posix=-shared -Wl,-soname,$@
 SO_LDFLAGS_darwin=-dynamiclib -twolevel_namespace -undefined dynamic_lookup \
 	-fno-common -headerpad_max_install_names -install_name $(libdir)/$@
 SO_LDFLAGS_mingw=-shared -Wl,--out-implib,librtmp.dll.a
 SO_LDFLAGS=$(SO_LDFLAGS_$(SYS))
 
+INSTALL_IMPLIB_android=
 INSTALL_IMPLIB_posix=
 INSTALL_IMPLIB_darwin=
 INSTALL_IMPLIB_mingw=cp librtmp.dll.a $(LIBDIR)
@@ -72,8 +86,15 @@ SO_DEF=$(SODEF_$(SHARED))
 SO_LIB=$(SOLIB_$(SHARED))
 SO_INST=$(SOINST_$(SHARED))
 
+# cflag 扩展
+SO_XCFLAGS_android=-ffunction-sections -funwind-tables -fstack-protector -no-canonical-prefixes -fomit-frame-pointer -fstrict-aliasing -funswitch-loops -finline-limit=300
+SO_XCFLAGS_posix=
+SO_XCFLAGS_darwin=
+SO_XCFLAGS_mingw=
+
 DEF=-DRTMPDUMP_VERSION=\"$(VERSION)\" $(CRYPTO_DEF) $(XDEF)
-OPT=-O2
+OPT=-O3
+XCFLAGS=$(SO_XCFLAGS_$(SYS))
 CFLAGS=-Wall $(XCFLAGS) $(INC) $(DEF) $(OPT) $(SO_DEF)
 LDFLAGS=$(XLDFLAGS)
 
@@ -90,7 +111,9 @@ librtmp.a: $(OBJS)
 
 librtmp$(SO_EXT): $(OBJS)
 	$(CC) $(SO_LDFLAGS) $(LDFLAGS) -o $@ $^ $> $(CRYPTO_LIB)
+ifneq ("$(SYS)","android")
 	ln -sf $@ librtmp.$(SOX)
+endif
 
 log.o: log.c log.h Makefile
 rtmp.o: rtmp.c rtmp.h rtmp_sys.h handshake.h dh.h log.h amf.h Makefile
@@ -117,5 +140,8 @@ install_base:	librtmp.a librtmp.pc
 install_so:	librtmp$(SO_EXT)
 	cp librtmp$(SO_EXT) $(SODIR)
 	$(INSTALL_IMPLIB)
-	cd $(SODIR); ln -sf librtmp$(SO_EXT) librtmp.$(SOX)
+	cd $(SODIR);
+ifneq ("$(SYS)","android")
+	ln -sf librtmp$(SO_EXT) librtmp.$(SOX)
+endif
 
