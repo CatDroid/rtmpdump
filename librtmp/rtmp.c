@@ -348,7 +348,7 @@ RTMP_Init(RTMP *r)
 }
 
 void
-RTMP_EnableWrite(RTMP *r)
+RTMP_EnableWrite(RTMP *r) // 设置为publish而不是play
 {
   r->Link.protocol |= RTMP_FEATURE_WRITE;
 }
@@ -765,6 +765,7 @@ int RTMP_SetupURL(RTMP *r, char *url)
     *ptr = '\0';
 
   len = strlen(url);
+  // 解析url结果保存在  r->Link.hostname 和 port 等
   ret = RTMP_ParseURL(url, &r->Link.protocol, &r->Link.hostname,
   	&port, &r->Link.playpath0, &r->Link.app);
   if (!ret)
@@ -1009,6 +1010,7 @@ RTMP_Connect1(RTMP *r, RTMPPacket *cp)
 	}
       r->m_msgCounter = 0;
     }
+  // RTMP握手 
   RTMP_Log(RTMP_LOGDEBUG, "%s, ... connected, handshaking", __FUNCTION__);
   if (!HandShake(r, TRUE))
     {
@@ -1018,6 +1020,7 @@ RTMP_Connect1(RTMP *r, RTMPPacket *cp)
     }
   RTMP_Log(RTMP_LOGDEBUG, "%s, handshaked", __FUNCTION__);
 
+  // 握手之后就是要按包RtmpPacket来发送数据了!!
   if (!SendConnectPacket(r, cp))
     {
       RTMP_Log(RTMP_LOGERROR, "%s, RTMP connect failed.", __FUNCTION__);
@@ -1055,7 +1058,7 @@ RTMP_Connect(RTMP *r, RTMPPacket *cp)
 
   r->m_bSendCounter = TRUE;
 
-  return RTMP_Connect1(r, cp);
+  return RTMP_Connect1(r, cp); // 在这里发送RtmpPacket(Rtmp Connect Packet ) 
 }
 
 static int
@@ -1559,7 +1562,7 @@ WriteN(RTMP *r, const char *buffer, int n)
 #define SAVC(x)	static const AVal av_##x = AVC(#x)
 
 SAVC(app);
-SAVC(connect);
+SAVC(connect); // av_connect
 SAVC(flashVer);
 SAVC(swfUrl);
 SAVC(pageUrl);
@@ -1575,16 +1578,44 @@ SAVC(secureTokenResponse);
 SAVC(type);
 SAVC(nonprivate);
 
+/*
+
+例如有一个RTMP封包的数据(AMF0)
+
+03  00 00 00   00 01 02   14   00 00 00 00 
+
+02 00 07 63 6F 6E 6E 65 63 74 
+00 3F F0 00 00 00 00 00 00 08 ......
+ 
+03表示12字节头 ChannelID =3  
+000000表示时间戳 Timer=0
+000102表示AMFSize=18
+14表示AMFType=Invoke 方法调用 
+00 00 00 00 表示StreamID = 0 //StreamID = 0 不是音视频流 StreamID=(ChannelID-4)/5+1
+ 
+到此,12字节RTMP头结束下面的是AMF数据分析
+具体的AMF0数据格式请参考 RTMP协议 
+
+02表示String
+0007表示String长度7
+63 6F 6E 6E 65 63 74 是String的Ascall值"connect"
+00表示Double
+3F F0 00 00 00 00 00 00 表示double的0.0 
+08表示Map数据开始
+
+
+*/
 static int
 SendConnectPacket(RTMP *r, RTMPPacket *cp)
 {
   RTMPPacket packet;
-  char pbuf[4096], *pend = pbuf + sizeof(pbuf);
+  char pbuf[4096], *pend = pbuf + sizeof(pbuf);// 指向 buffer的最后地址
   char *enc;
 
-  if (cp)
+  if (cp) // 如果不是空的话  发送  RTMP_Connect(RTMP *r, RTMPPacket *cp) 用户自定义的 '连接包'
     return RTMP_SendPacket(r, cp, TRUE);
 
+  // 如果用户没有自己定义的'连接包' 这里用默认的
   packet.m_nChannel = 0x03;	/* control channel (invoke) */
   packet.m_headerType = RTMP_PACKET_SIZE_LARGE;
   packet.m_packetType = RTMP_PACKET_TYPE_INVOKE;
@@ -1593,11 +1624,25 @@ SendConnectPacket(RTMP *r, RTMPPacket *cp)
   packet.m_hasAbsTimestamp = 0;
   packet.m_body = pbuf + RTMP_MAX_HEADER_SIZE;
 
-  enc = packet.m_body;
+  enc = packet.m_body; // pbuf 加上 最大头部  RTMP_MAX_HEADER_SIZE 
   enc = AMF_EncodeString(enc, pend, &av_connect);
   enc = AMF_EncodeNumber(enc, pend, ++r->m_numInvokes);
   *enc++ = AMF_OBJECT;
 
+  /*
+  av_app av_connect 等属性名字的定义和属性名字长度 见宏定义:
+  
+  SAVC(app);		
+  SAVC(connect);
+  SAVC(flashVer);
+  SAVC(swfUrl);
+  SAVC(pageUrl);
+  SAVC(tcUrl);
+
+
+  */
+
+  // url 中 rtmp://192.168.43.12:1935/<app>/<appinstance/playpath>
   enc = AMF_EncodeNamedString(enc, pend, &av_app, &r->Link.app);
   if (!enc)
     return FALSE;
@@ -1627,6 +1672,8 @@ SendConnectPacket(RTMP *r, RTMPPacket *cp)
     }
   if (!(r->Link.protocol & RTMP_FEATURE_WRITE))
     {
+    // 如果是play的情况(不是publish publis就是RTMP_FEATURE_WRITE )
+    // 通过 RTMP_EnableWrite 设置 RTMP_FEATURE_WRITE
       enc = AMF_EncodeNamedBoolean(enc, pend, &av_fpad, FALSE);
       if (!enc)
 	return FALSE;
@@ -3747,22 +3794,23 @@ HandShake(RTMP *r, int FP9HandShake)
   uint32_t uptime, suptime;
   int bMatch;
   char type;
+  // 版本号 + RTMP_SIG_SIZE
   char clientbuf[RTMP_SIG_SIZE + 1], *clientsig = clientbuf + 1;
   char serversig[RTMP_SIG_SIZE];
-
-  clientbuf[0] = 0x03;		/* not encrypted */
+							// C0, 一个字节。03代表协议版本号为3 
+  clientbuf[0] = 0x03;		/* not encrypted */ //  1个字节
 
   uptime = htonl(RTMP_GetTime());
-  memcpy(clientsig, &uptime, 4);
+  memcpy(clientsig, &uptime, 4); //  4个字节 时间戳  放在C1消息头部
 
-  memset(&clientsig[4], 0, 4);
+  memset(&clientsig[4], 0, 4);	//  4个字节 0  空数据
 
 #ifdef _DEBUG
-  for (i = 8; i < RTMP_SIG_SIZE; i++)
+  for (i = 8; i < RTMP_SIG_SIZE; i++) // RTMP_SIG_SIZE = 1536
     clientsig[i] = 0xff;
 #else
-  for (i = 8; i < RTMP_SIG_SIZE; i++)
-    clientsig[i] = (char)(rand() % 256);
+  for (i = 8; i < RTMP_SIG_SIZE; i++) // 第 1 + 8 个字节以后的数据
+    clientsig[i] = (char)(rand() % 256); // 剩下 RTMP_SIG_SIZE - 8 - 1 个字节
 #endif
 
   if (!WriteN(r, clientbuf, RTMP_SIG_SIZE + 1))
@@ -3773,15 +3821,16 @@ HandShake(RTMP *r, int FP9HandShake)
 
   RTMP_Log(RTMP_LOGDEBUG, "%s: Type Answer   : %02X", __FUNCTION__, type);
 
-  if (type != clientbuf[0])
+  if (type != clientbuf[0]) // S0消息，看协议是否一样 应该等于  clientbuf[0] = 0x03;
     RTMP_Log(RTMP_LOGWARNING, "%s: Type mismatch: client sent %d, server answered %d",
 	__FUNCTION__, clientbuf[0], type);
 
   if (ReadN(r, serversig, RTMP_SIG_SIZE) != RTMP_SIG_SIZE)
-    return FALSE;
-
-  /* decode server response */
-
+    return FALSE;// 服务器返回 除了版本号后面的 RTMP_SIG_SIZE 的数据
+				 // 包含了 4 时间戳 + 4 空格 + (RTMP_SIG_SIZE-4-4)随机数
+				 // 读取S1消息，里面有服务器运行时间
+			
+	/* decode server response */
   memcpy(&suptime, serversig, 4);
   suptime = ntohl(suptime);
 
@@ -3789,10 +3838,12 @@ HandShake(RTMP *r, int FP9HandShake)
   RTMP_Log(RTMP_LOGDEBUG, "%s: FMS Version   : %d.%d.%d.%d", __FUNCTION__,
       serversig[4], serversig[5], serversig[6], serversig[7]);
 
+  // 发送C2消息，内容就等于S1消息的内容  没有了版本号
   /* 2nd part of handshake */
   if (!WriteN(r, serversig, RTMP_SIG_SIZE))
     return FALSE;
 
+  //读取S2消息 应该等于C1 
   if (ReadN(r, serversig, RTMP_SIG_SIZE) != RTMP_SIG_SIZE)
     return FALSE;
 
@@ -3801,6 +3852,10 @@ HandShake(RTMP *r, int FP9HandShake)
     {
       RTMP_Log(RTMP_LOGWARNING, "%s, client signature does not match!", __FUNCTION__);
     }
+  // 总结
+  // C0 S0 是版本号
+  // C1 C2  和  S1 S2  就是互发信息确认
+  // C1和S1 是发送给对方的 带有自己时间戳 和 随机数据包 的 握手数据
   return TRUE;
 }
 
@@ -3892,6 +3947,50 @@ RTMP_SendChunk(RTMP *r, RTMPChunk *chunk)
   return wrote;
 }
 
+/*
+>>>Head_Type 
+	Head_Type的前两个Bit和长度对应关系：
+	Bits  Header Length  
+	00  12 bytes  
+	01  8 bytes  
+	10  4 bytes  
+	11  1 byte 
+
+	Head_Type的后面6个Bit和StreamID决定了ChannelID
+
+	StreamID和ChannelID对应关系：StreamID=(ChannelID-4)/5+1 参考red5
+
+>>>ChannelID   
+	02 Ping 和ByteRead通道 
+	03 Invoke通道 我们的connect() publish()和自字写的NetConnection.Call() 数据都是在这个通道的 
+	04 Audio和Vidio通道 
+	05 06 07 服务器保留,经观察FMS2用这些Channel也用来发送音频或视频数据 
+
+>>>TiMMER  
+	时间戳占用RTMP包头的第2、3、4 三个字节
+
+>>>AMFSize - 数据大小	占用3个字节
+	这个长度是AMF长度
+
+	如果超过了128字节 那么由多个后续RTMP封包组合
+	每个后续RTMP封包的头只占一个字节
+	一般就是以0xC？开头
+	1个字节的包头表示这个包的时间戳 数据大小 数据类型 流ID都和上一个相同ChannelID的RTMP包完全一样
+
+>>>AMFType - 数据类型	占用1个字节
+	
+	0x08  Audio Data  packet containing audio  
+	0x09  Video Data  packet containing video data  
+	0x14  Invoke  like remoting call, used for stream actions too. 
+
+>>> StreamID - 流ID		RTMP包头的最后4个字节
+	StreamID=(ChannelID-4)/5+1
+	StreamID是音视频流的唯一ID, 一路流如果既有音频包又有视频包，那么这路流音频包的StreamID和他视频包的StreamID相同，但ChannelID不同。
+	封包既不是音频包，也不是视频包，那么他的StreamID=0.
+
+*/
+
+
 int
 RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
 {
@@ -3922,7 +4021,10 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
 
   prevPacket = r->m_vecChannelsOut[packet->m_nChannel];
   if (prevPacket && packet->m_headerType != RTMP_PACKET_SIZE_LARGE)
-    {
+  {
+  // 如果之前的RTMP包头 中的属性 跟之前的包头 一样
+  // 可以不再次发送
+  
       /* compress a bit by using the prev packet's attributes */
       if (prevPacket->m_nBodySize == packet->m_nBodySize
 	  && prevPacket->m_packetType == packet->m_packetType
@@ -3942,7 +4044,7 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
       return FALSE;
     }
 
-  nSize = packetSize[packet->m_headerType];
+  nSize = packetSize[packet->m_headerType];// 12 8  4 1个字节
   hSize = nSize; cSize = 0;
   t = packet->m_nTimeStamp - last;
 
@@ -3975,11 +4077,11 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
     }
 
   hptr = header;
-  c = packet->m_headerType << 6;
+  c = packet->m_headerType << 6; // 标记头部的大小 1 4 8 12个字节(包含HeaderType)
   switch (cSize)
     {
     case 0:
-      c |= packet->m_nChannel;
+      c |= packet->m_nChannel; // 通道
       break;
     case 1:
       break;

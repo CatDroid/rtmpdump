@@ -141,7 +141,7 @@ AMF_EncodeInt16(char *output, char *outend, short nVal)
     return NULL;
 
   output[1] = nVal & 0xff;
-  output[0] = nVal >> 8;
+  output[0] = nVal >> 8; // 大端序
   return output+2;
 }
 
@@ -179,9 +179,9 @@ AMF_EncodeString(char *output, char *outend, const AVal *bv)
 
   if (bv->av_len < 65536)
     {
-      *output++ = AMF_STRING;
+      *output++ = AMF_STRING; // 写String的类型(一般 AMF_STRING / 长 AMF_LONG_STRING)
 
-      output = AMF_EncodeInt16(output, outend, bv->av_len);
+      output = AMF_EncodeInt16(output, outend, bv->av_len); // 写长度 占用 2/4个字节
     }
   else
     {
@@ -189,7 +189,7 @@ AMF_EncodeString(char *output, char *outend, const AVal *bv)
 
       output = AMF_EncodeInt32(output, outend, bv->av_len);
     }
-  memcpy(output, bv->av_val, bv->av_len);
+  memcpy(output, bv->av_val, bv->av_len); // 写字符串
   output += bv->av_len;
 
   return output;
@@ -269,11 +269,17 @@ AMF_EncodeBoolean(char *output, char *outend, int bVal)
   return output;
 }
 
+// outend 用来判断地址 是否越界了
 char *
 AMF_EncodeNamedString(char *output, char *outend, const AVal *strName, const AVal *strValue)
 {
   if (output+2+strName->av_len > outend)
     return NULL;
+
+  /*	属性名字(String)			属性值(String/double/Boolean)
+		长度(占2字节)+ 名字			String: 类型(AMF_STRING/AMF_LONG_STRING 占一个字节) + 长度(占2/4个字节) + 字符串 
+									double: 类型(AMF_NUMBER占一个字节) + 数据(double 占一个字节)
+  */
   output = AMF_EncodeInt16(output, outend, strName->av_len);
 
   memcpy(output, strName->av_val, strName->av_len);

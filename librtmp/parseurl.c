@@ -72,7 +72,7 @@ int RTMP_ParseURL(const char *url, int *protocol, AVal *host, unsigned int *port
 	else {
 		RTMP_Log(RTMP_LOGWARNING, "Unknown protocol!\n");
 		goto parsehost;
-	}
+	}// 根据url前缀 返回使用的协议 rtmp/rtmpt/rtmps...
 	}
 
 	RTMP_Log(RTMP_LOGDEBUG, "Parsed protocol: %d", *protocol);
@@ -102,7 +102,7 @@ parsehost:
 		hostlen = col - p;
 
 	if(hostlen < 256) {
-		host->av_val = p;
+		host->av_val = p; // 指向 主机地址部分 192.168.1.11
 		host->av_len = hostlen;
 		RTMP_Log(RTMP_LOGDEBUG, "Parsed host    : %.*s", hostlen, host->av_val);
 	} else {
@@ -120,7 +120,7 @@ parsehost:
 		if(p2 > 65535) {
 			RTMP_Log(RTMP_LOGWARNING, "Invalid port number!");
 		} else {
-			*port = p2;
+			*port = p2; // 解析端口 返回
 		}
 	}
 

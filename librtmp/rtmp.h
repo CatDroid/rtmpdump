@@ -97,7 +97,7 @@ extern "C"
 
 #define RTMP_MAX_HEADER_SIZE 18
 
-#define RTMP_PACKET_SIZE_LARGE    0
+#define RTMP_PACKET_SIZE_LARGE    0 // 代表RTMP包头 12个字节(HeaderTye 1 + Time 3 + AMFSize 3 + AMFType 1 + StreameID 4)
 #define RTMP_PACKET_SIZE_MEDIUM   1
 #define RTMP_PACKET_SIZE_SMALL    2
 #define RTMP_PACKET_SIZE_MINIMUM  3
@@ -176,7 +176,8 @@ extern "C"
 
     int swfAge;
 
-    int protocol;
+    int protocol;		// RTMP_FEATURE_WRITE 设置了 作为publish, not play 
+    					// 通过 RTMP_EnableWrite 设置 RTMP_FEATURE_WRITE
     int timeout;		/* connection timeout in seconds */
 
     int pFlags;			/* unused, but kept to avoid breaking ABI */
