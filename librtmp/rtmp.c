@@ -1113,6 +1113,16 @@ RTMP_ConnectStream(RTMP *r, int seekTime)
 
   r->m_mediaChannel = 0;
 
+  /*
+  	如果 m_bPlaying = false , 一直在这里读取RTMP Packet 
+
+  	在 RTMP_ClientPacket 
+  			--> HandleInvoke 
+  				--> AVMATCH(&method, &av__result) 
+  					AVMATCH(&methodInvoked, &av_play) || AVMATCH(&methodInvoked, &av_publish))
+      					r->m_bPlaying = TRUE;// 收到 play/publish的 _result
+
+  */
   while (!r->m_bPlaying && RTMP_IsConnected(r) && RTMP_ReadPacket(r, &packet))
     {
       if (RTMPPacket_IsReady(&packet))
@@ -1128,7 +1138,7 @@ RTMP_ConnectStream(RTMP *r, int seekTime)
 	      continue;
 	    }
 
-	  RTMP_ClientPacket(r, &packet);
+	  RTMP_ClientPacket(r, &packet);// 处理 S->C的RTMP Message 
 	  RTMPPacket_Free(&packet);
 	}
     }
@@ -1190,7 +1200,7 @@ RTMP_GetNextMediaPacket(RTMP *r, RTMPPacket *packet)
     {
       if (!RTMPPacket_IsReady(packet) || !packet->m_nBodySize)
 	{
-	  continue;
+	  continue;// RTMPPacket_IsReady 会判断 Message是否读取完毕 否则继续读取 
 	}
 
       bHasMediaPacket = RTMP_ClientPacket(r, packet); // 回调处理 RPC
@@ -2990,8 +3000,10 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
 
   /*
 		method 就是 Command Name
-				可能值是 "_result" "_error"
-						 "命令名字" "onStatus"
+				可能值是 "_result" "_error" "命令名字" "onStatus"
+
+		在 m_methodCalls[i] 中根据 事务ID 找到请求的命令
+						 
   */
 
   if (AVMATCH(&method, &av__result))
@@ -3036,7 +3048,7 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
 	      RTMP_SendServerBW(r);
 	      RTMP_SendCtrl(r, 3, 0, 300);
 	    }
-	  RTMP_SendCreateStream(r);
+	  RTMP_SendCreateStream(r); // connect返回后 就立刻发createStream
 
 	  if (!(r->Link.protocol & RTMP_FEATURE_WRITE))
 	    {
@@ -3070,7 +3082,7 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
       else if (AVMATCH(&methodInvoked, &av_play) ||
       	AVMATCH(&methodInvoked, &av_publish))
 	{
-	  r->m_bPlaying = TRUE;
+	  r->m_bPlaying = TRUE;// 收到 play/publish的 _result
 	}
       free(methodInvoked.av_val);
     }
@@ -3755,6 +3767,8 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
   if (nToRead < nChunk) // 每次ChunkSize都是128B(可修改)
     nChunk = nToRead;
 
+  // 如果最后一个Packet不满128B 那么 nToRead就是<128B ,只读剩余的不满128B
+  
   /* Does the caller want the raw chunk? */
   if (packet->m_chunk)
     {
@@ -3765,7 +3779,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
     }
 
   if (ReadN(r, packet->m_body + packet->m_nBytesRead, nChunk) != nChunk)
-    {
+    {// 读取到紧跟着的位置 m_body+m_nBytesRead
       RTMP_Log(RTMP_LOGERROR, "%s, failed to read RTMP packet body. len: %u",
 	  __FUNCTION__, packet->m_nBodySize);
       return FALSE;
@@ -3784,7 +3798,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
       r->m_vecChannelsIn[packet->m_nChannel]->m_nTimeStamp = 0xffffff;
     }
 
-  if (RTMPPacket_IsReady(packet))
+  if (RTMPPacket_IsReady(packet))//判断是否一个Message已经读取完毕
     {
       /* make packet's timestamp absolute */
       if (!packet->m_hasAbsTimestamp)
