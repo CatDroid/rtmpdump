@@ -1056,7 +1056,9 @@ RTMP_Connect(RTMP *r, RTMPPacket *cp)
   if (!RTMP_Connect0(r, (struct sockaddr *)&service))
     return FALSE;
 
-  r->m_bSendCounter = TRUE;
+  r->m_bSendCounter = TRUE; 
+  // 是否发送 Acknowledgement(Message Type ID=3) 报告已接收的字节数
+  // 见ReadN SendBytesReceived 
 
   return RTMP_Connect1(r, cp); // 在这里发送RtmpPacket(Rtmp Connect Packet ) 
 }
@@ -1184,14 +1186,14 @@ RTMP_GetNextMediaPacket(RTMP *r, RTMPPacket *packet)
   int bHasMediaPacket = 0;
 
   while (!bHasMediaPacket && RTMP_IsConnected(r)
-	 && RTMP_ReadPacket(r, packet))
+	 && RTMP_ReadPacket(r, packet)) /// 一直读取Packet
     {
       if (!RTMPPacket_IsReady(packet) || !packet->m_nBodySize)
 	{
 	  continue;
 	}
 
-      bHasMediaPacket = RTMP_ClientPacket(r, packet);
+      bHasMediaPacket = RTMP_ClientPacket(r, packet); // 回调处理 RPC
 
       if (!bHasMediaPacket)
 	{
@@ -1231,17 +1233,17 @@ RTMP_ClientPacket(RTMP *r, RTMPPacket *packet)
   int bHasMediaPacket = 0;
   switch (packet->m_packetType)
     {
-    case RTMP_PACKET_TYPE_CHUNK_SIZE:
+    case RTMP_PACKET_TYPE_CHUNK_SIZE: // 设置SetChunkSize信息
       /* chunk size */
-      HandleChangeChunkSize(r, packet);
+      HandleChangeChunkSize(r, packet);// 把接收ChunkSize保存到m_inChunkSize
       break;
 
-    case RTMP_PACKET_TYPE_BYTES_READ_REPORT:
+    case RTMP_PACKET_TYPE_BYTES_READ_REPORT: //Msg Type:0x03 对端已接收到的字节数
       /* bytes read report */
       RTMP_Log(RTMP_LOGDEBUG, "%s, received: bytes read report", __FUNCTION__);
       break;
 
-    case RTMP_PACKET_TYPE_CONTROL:
+    case RTMP_PACKET_TYPE_CONTROL:// 用户控制信息 MsgType=0x4
       /* ctrl */
       HandleCtrl(r, packet);
       break;
@@ -1256,10 +1258,10 @@ RTMP_ClientPacket(RTMP *r, RTMPPacket *packet)
       HandleClientBW(r, packet);
       break;
 
-    case RTMP_PACKET_TYPE_AUDIO:
+    case RTMP_PACKET_TYPE_AUDIO:// 音频信息 MsgType=0x8
       /* audio data */
       /*RTMP_Log(RTMP_LOGDEBUG, "%s, received: audio %lu bytes", __FUNCTION__, packet.m_nBodySize); */
-      HandleAudio(r, packet);
+      HandleAudio(r, packet); // 收到音频数据    目前HandleAudio是空的
       bHasMediaPacket = 1;
       if (!r->m_mediaChannel)
 	r->m_mediaChannel = packet->m_nChannel;
@@ -1267,10 +1269,10 @@ RTMP_ClientPacket(RTMP *r, RTMPPacket *packet)
 	r->m_mediaStamp = packet->m_nTimeStamp;
       break;
 
-    case RTMP_PACKET_TYPE_VIDEO:
+    case RTMP_PACKET_TYPE_VIDEO:// 视频信息 MsgType=0x9
       /* video data */
       /*RTMP_Log(RTMP_LOGDEBUG, "%s, received: video %lu bytes", __FUNCTION__, packet.m_nBodySize); */
-      HandleVideo(r, packet);
+      HandleVideo(r, packet); // 收到视频数据  目前HandleVideo是空的
       bHasMediaPacket = 1;
       if (!r->m_mediaChannel)
 	r->m_mediaChannel = packet->m_nChannel;
@@ -1316,7 +1318,7 @@ RTMP_ClientPacket(RTMP *r, RTMPPacket *packet)
 	  bHasMediaPacket = 2;
 	break;
       }
-    case RTMP_PACKET_TYPE_INFO:
+    case RTMP_PACKET_TYPE_INFO: // 元数据信息
       /* metadata (notify) */
       RTMP_Log(RTMP_LOGDEBUG, "%s, received: notify %u bytes", __FUNCTION__,
 	  packet->m_nBodySize);
@@ -1329,7 +1331,7 @@ RTMP_ClientPacket(RTMP *r, RTMPPacket *packet)
 	  __FUNCTION__);
       break;
 
-    case RTMP_PACKET_TYPE_INVOKE:
+    case RTMP_PACKET_TYPE_INVOKE:// 命令消息  0x14/20 AMF0  有NetConnect类命令(connect createStream) NetStream类命令(play pause)
       /* invoke */
       RTMP_Log(RTMP_LOGDEBUG, "%s, received: invoke %u bytes", __FUNCTION__,
 	  packet->m_nBodySize);
@@ -1696,6 +1698,8 @@ SendConnectPacket(RTMP *r, RTMPPacket *cp)
 	    return FALSE;
 	}
     }
+
+  // 目前librtmp只支持AMF0 而不支持AMF3
   if (r->m_fEncoding != 0.0 || r->m_bSendEncoding)
     {	/* AMF0, AMF3 not fully supported yet */
       enc = AMF_EncodeNamedNumber(enc, pend, &av_objectEncoding, r->m_fEncoding);
@@ -1777,16 +1781,16 @@ RTMP_SendCreateStream(RTMP *r)
 
   packet.m_nChannel = 0x03;	/* control channel (invoke) */
   packet.m_headerType = RTMP_PACKET_SIZE_MEDIUM;
-  packet.m_packetType = RTMP_PACKET_TYPE_INVOKE;
-  packet.m_nTimeStamp = 0;
-  packet.m_nInfoField2 = 0;
+  packet.m_packetType = RTMP_PACKET_TYPE_INVOKE; // Message Type ID=0x14 20 采用AMF编码 而不是AMF3编码
+  packet.m_nTimeStamp = 0; // 命令消息 时间戳会被忽略
+  packet.m_nInfoField2 = 0; // 命令消息 Message Stream ID必须为0
   packet.m_hasAbsTimestamp = 0;
   packet.m_body = pbuf + RTMP_MAX_HEADER_SIZE;
 
   enc = packet.m_body;
   enc = AMF_EncodeString(enc, pend, &av_createStream);
-  enc = AMF_EncodeNumber(enc, pend, ++r->m_numInvokes);
-  *enc++ = AMF_NULL;		/* NULL */
+  enc = AMF_EncodeNumber(enc, pend, ++r->m_numInvokes);// 事务ID 
+  *enc++ = AMF_NULL;		/* NULL */ // Command Object 是空的
 
   packet.m_nBodySize = enc - packet.m_body;
 
@@ -2129,15 +2133,17 @@ SendBytesReceived(RTMP *r)
   RTMPPacket packet;
   char pbuf[256], *pend = pbuf + sizeof(pbuf);
 
-  packet.m_nChannel = 0x02;	/* control channel (invoke) */
+  // 协议控制消息必须有消息流ID 0和块流ID 2，并且有最高的发送优先级
+  // 
+  packet.m_nChannel = 0x02;	/* control channel (invoke) */ // 块流ID
   packet.m_headerType = RTMP_PACKET_SIZE_MEDIUM;
-  packet.m_packetType = RTMP_PACKET_TYPE_BYTES_READ_REPORT;
+  packet.m_packetType = RTMP_PACKET_TYPE_BYTES_READ_REPORT;// 协议控制消息类型3
   packet.m_nTimeStamp = 0;
-  packet.m_nInfoField2 = 0;
+  packet.m_nInfoField2 = 0; // 消息流ID 0
   packet.m_hasAbsTimestamp = 0;
   packet.m_body = pbuf + RTMP_MAX_HEADER_SIZE;
 
-  packet.m_nBodySize = 4;
+  packet.m_nBodySize = 4;// 序列号（4字节），是到当前时间为止已经接收到的字节数
 
   AMF_EncodeInt32(packet.m_body, pend, r->m_nBytesIn);	/* hard coded for now */
   r->m_nBytesInSent = r->m_nBytesIn;
@@ -2400,14 +2406,14 @@ RTMP_SendCtrl(RTMP *r, short nType, unsigned int nObject, unsigned int nTime)
   packet.m_hasAbsTimestamp = 0;
   packet.m_body = pbuf + RTMP_MAX_HEADER_SIZE;
 
-  switch(nType) {
+  switch(nType) {// 决定负载的大小
   case 0x03: nSize = 10; break;	/* buffer time */
   case 0x1A: nSize = 3; break;	/* SWF verify request */
   case 0x1B: nSize = 44; break;	/* SWF verify response */
   default: nSize = 6; break;
   }
 
-  packet.m_nBodySize = nSize;
+  packet.m_nBodySize = nSize; 
 
   buf = packet.m_body;
   buf = AMF_EncodeInt16(buf, pend, nType);
@@ -2960,7 +2966,7 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
 {
   AMFObject obj;
   AVal method;
-  double txn;
+  double txn; // 事务ID 
   int ret = 0, nRes;
   if (body[0] != 0x02)		/* make sure it is a string method name we start with */
     {
@@ -2981,14 +2987,21 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
   txn = AMFProp_GetNumber(AMF_GetProp(&obj, NULL, 1));
   RTMP_Log(RTMP_LOGDEBUG, "%s, server invoking <%s>", __FUNCTION__, method.av_val);
 
+
+  /*
+		method 就是 Command Name
+				可能值是 "_result" "_error"
+						 "命令名字" "onStatus"
+  */
+
   if (AVMATCH(&method, &av__result))
     {
       AVal methodInvoked = {0};
       int i;
 
       for (i=0; i<r->m_numCalls; i++) {
-	if (r->m_methodCalls[i].num == (int)txn) {
-	  methodInvoked = r->m_methodCalls[i].name;
+	if (r->m_methodCalls[i].num == (int)txn) { // 对比事务ID
+	  methodInvoked = r->m_methodCalls[i].name; // 找到对应的请求方法
 	  AV_erase(r->m_methodCalls, &r->m_numCalls, i, FALSE);
 	  break;
 	}
@@ -3040,7 +3053,8 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
       else if (AVMATCH(&methodInvoked, &av_createStream))
 	{
 	  r->m_stream_id = (int)AMFProp_GetNumber(AMF_GetProp(&obj, NULL, 3));
-
+		// 获得streamd_id，以后0x8 0x9都要到StreamID
+		// 
 	  if (r->Link.protocol & RTMP_FEATURE_WRITE)
 	    {
 	      SendPublish(r);
@@ -3410,7 +3424,7 @@ HandleVideo(RTMP *r, const RTMPPacket *packet)
 }
 
 static void
-HandleCtrl(RTMP *r, const RTMPPacket *packet)
+HandleCtrl(RTMP *r, const RTMPPacket *packet) // 用户控制信息 Msg Type=4
 {
   short nType = -1;
   unsigned int tmp;
@@ -3604,7 +3618,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 
   RTMP_Log(RTMP_LOGDEBUG2, "%s: fd=%d", __FUNCTION__, r->m_sb.sb_socket);
 
-  if (ReadN(r, (char *)hbuf, 1) == 0)
+  if (ReadN(r, (char *)hbuf, 1) == 0) // 先读取第一个字节 判断CSID(m_nChannel 0 1 2 是保留的)
     {
       RTMP_Log(RTMP_LOGERROR, "%s, failed to read RTMP packet header", __FUNCTION__);
       return FALSE;
@@ -3613,7 +3627,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
   packet->m_headerType = (hbuf[0] & 0xc0) >> 6;
   packet->m_nChannel = (hbuf[0] & 0x3f);
   header++;
-  if (packet->m_nChannel == 0)
+  if (packet->m_nChannel == 0) // CSID = 0  Basic Header = 2个字节 
     {
       if (ReadN(r, (char *)&hbuf[1], 1) != 1)
 	{
@@ -3621,11 +3635,11 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 	      __FUNCTION__);
 	  return FALSE;
 	}
-      packet->m_nChannel = hbuf[1];
+      packet->m_nChannel = hbuf[1]; // 第二个字节 组成CSID
       packet->m_nChannel += 64;
       header++;
     }
-  else if (packet->m_nChannel == 1)
+  else if (packet->m_nChannel == 1) // CSID = 1  Basic Header = 3个字节 
     {
       int tmp;
       if (ReadN(r, (char *)&hbuf[1], 2) != 2)
@@ -3634,13 +3648,13 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 	      __FUNCTION__);
 	  return FALSE;
 	}
-      tmp = (hbuf[2] << 8) + hbuf[1];
+      tmp = (hbuf[2] << 8) + hbuf[1]; // 第二个字节 和 第三个字节 组成CSID (小端序)
       packet->m_nChannel = tmp + 64;
       RTMP_Log(RTMP_LOGDEBUG, "%s, m_nChannel: %0x", __FUNCTION__, packet->m_nChannel);
       header += 2;
     }
 
-  nSize = packetSize[packet->m_headerType];
+  nSize = packetSize[packet->m_headerType]; 
 
   if (packet->m_nChannel >= r->m_channelsAllocatedIn)
     {
@@ -3662,6 +3676,11 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
       r->m_channelsAllocatedIn = n;
     }
 
+  /*
+	根据第一个自己的chunktype/format  bit[1:0]
+	读取Message Header 
+
+  */
   if (nSize == RTMP_LARGE_HEADER_SIZE)	/* if we get a full header the timestamp is absolute */
     packet->m_hasAbsTimestamp = TRUE;
 
@@ -3672,7 +3691,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 	       sizeof(RTMPPacket));
     }
 
-  nSize--;
+  nSize--; // 上面 nSize 是表示 Basic Header+Msg Header的长度 12 8 4 1 
 
   if (nSize > 0 && ReadN(r, header, nSize) != nSize)
     {
@@ -3705,7 +3724,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
     }
 
   extendedTimestamp = packet->m_nTimeStamp == 0xffffff;
-  if (extendedTimestamp)
+  if (extendedTimestamp) // 判断是否有扩展时间戳
     {
       if (ReadN(r, header + nSize, 4) != 4)
 	{
@@ -3730,9 +3749,10 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
       packet->m_headerType = (hbuf[0] & 0xc0) >> 6;
     }
 
+// m_nBodySize 是整个Message的大小 m_nBytesRead是已读Message的大小
   nToRead = packet->m_nBodySize - packet->m_nBytesRead;
   nChunk = r->m_inChunkSize;
-  if (nToRead < nChunk)
+  if (nToRead < nChunk) // 每次ChunkSize都是128B(可修改)
     nChunk = nToRead;
 
   /* Does the caller want the raw chunk? */
@@ -3753,7 +3773,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 
   RTMP_LogHexString(RTMP_LOGDEBUG2, (uint8_t *)packet->m_body + packet->m_nBytesRead, nChunk);
 
-  packet->m_nBytesRead += nChunk;
+  packet->m_nBytesRead += nChunk;// 记录下已经读取的Message长度
 
   /* keep the packet as ref for other packets on this channel */
   if (!r->m_vecChannelsIn[packet->m_nChannel])
@@ -4098,21 +4118,21 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
 	*hptr++ = tmp >> 8;
     }
 
-  if (nSize > 1)
-    {
+  if (nSize > 1) // Basic Header + Message Header的长度
+    {// Message Header 加入 时间戳 (3个字节)
       hptr = AMF_EncodeInt24(hptr, hend, t > 0xffffff ? 0xffffff : t);
     }
 
-  if (nSize > 4)
-    {
+  if (nSize > 4) 
+    {// Message Header 加入 消息大小 和 类型   (3+1个字节)
       hptr = AMF_EncodeInt24(hptr, hend, packet->m_nBodySize);
       *hptr++ = packet->m_packetType;
     }
 
-  if (nSize > 8)
-    hptr += EncodeInt32LE(hptr, packet->m_nInfoField2);
+  if (nSize > 8) // msg stream id（消息的流id） 4个字节
+    hptr += EncodeInt32LE(hptr, packet->m_nInfoField2); 
 
-  if (t >= 0xffffff)
+  if (t >= 0xffffff) // 扩展时间戳 4个字节
     hptr = AMF_EncodeInt32(hptr, hend, t);
 
   nSize = packet->m_nBodySize;
@@ -4198,17 +4218,20 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
 
   /* we invoked a remote method */
   if (packet->m_packetType == RTMP_PACKET_TYPE_INVOKE)
-    {
+    {// 如果是命令消息:NetConntect NetStream类(connect createStream call play pause 等)
       AVal method;
       char *ptr;
-      ptr = packet->m_body + 1;
-      AMF_DecodeString(ptr, &method);
+
+	  // AMF编码:数据类型(AMF_STRING 1个字节) + 长度(2个字节) + 字符串
+      ptr = packet->m_body + 1; 
+      AMF_DecodeString(ptr, &method); 
       RTMP_Log(RTMP_LOGDEBUG, "Invoking %s", method.av_val);
       /* keep it in call queue till result arrives */
       if (queue) {
         int txn;
         ptr += 3 + method.av_len;
-        txn = (int)AMF_DecodeNumber(ptr);
+        txn = (int)AMF_DecodeNumber(ptr);// 这个就是事务ID
+		// 加入到RPC调用队列  r->m_methodCalls
 	AV_queue(&r->m_methodCalls, &r->m_numCalls, &method, txn);
       }
     }
@@ -5111,7 +5134,7 @@ fail:
 	  cnt += sizeof(flvHeader);
 
 	  while (r->m_read.timestamp == 0)
-	    {
+	    {// 解析
 	      nRead = Read_1_Packet(r, r->m_read.buf, r->m_read.buflen);
 	      if (nRead < 0)
 		{

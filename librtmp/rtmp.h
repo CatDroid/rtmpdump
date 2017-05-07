@@ -86,11 +86,11 @@ extern "C"
 /*      RTMP_PACKET_TYPE_...                0x0C */
 /*      RTMP_PACKET_TYPE_...                0x0D */
 /*      RTMP_PACKET_TYPE_...                0x0E */
-#define RTMP_PACKET_TYPE_FLEX_STREAM_SEND   0x0F
-#define RTMP_PACKET_TYPE_FLEX_SHARED_OBJECT 0x10
-#define RTMP_PACKET_TYPE_FLEX_MESSAGE       0x11
-#define RTMP_PACKET_TYPE_INFO               0x12
-#define RTMP_PACKET_TYPE_SHARED_OBJECT      0x13
+#define RTMP_PACKET_TYPE_FLEX_STREAM_SEND   0x0F // AMF3 (元)数据消息
+#define RTMP_PACKET_TYPE_FLEX_SHARED_OBJECT 0x10 // AMF3 共享消息
+#define RTMP_PACKET_TYPE_FLEX_MESSAGE       0x11 
+#define RTMP_PACKET_TYPE_INFO               0x12 // AMF0 (元)数据消息
+#define RTMP_PACKET_TYPE_SHARED_OBJECT      0x13 // AMF0 共享消息
 #define RTMP_PACKET_TYPE_INVOKE             0x14
 /*      RTMP_PACKET_TYPE_...                0x15 */
 #define RTMP_PACKET_TYPE_FLASH_VIDEO        0x16
@@ -112,16 +112,16 @@ extern "C"
 
   typedef struct RTMPPacket
   {
-    uint8_t m_headerType;
-    uint8_t m_packetType;
+    uint8_t m_headerType; // Chunk Type(Message Header的长度 11 7 3 0 ),Basic Header固定一个字节,Header总长12 8 4 1 + 4个字节可选扩展时间错
+    uint8_t m_packetType; // 流类型 08 RTMP_PACKET_TYPE_AUDIO  09 RTMP_PACKET_TYPE_VIDEO
     uint8_t m_hasAbsTimestamp;	/* timestamp absolute or relative? */
     int m_nChannel;
     uint32_t m_nTimeStamp;	/* timestamp */
-    int32_t m_nInfoField2;	/* last 4 bytes in a long header */
+    int32_t m_nInfoField2;	/* last 4 bytes in a long header */ // 就是流ID m_stream_id
     uint32_t m_nBodySize;
     uint32_t m_nBytesRead;
     RTMPChunk *m_chunk;
-    char *m_body;
+    char *m_body; // 指向负载数据
   } RTMPPacket;
 
   typedef struct RTMPSockBuf
@@ -240,8 +240,8 @@ extern "C"
     int m_inChunkSize;
     int m_outChunkSize;
     int m_nBWCheckCounter;
-    int m_nBytesIn;
-    int m_nBytesInSent;
+    int m_nBytesIn;			// 记录已接收的字节数(m_nBytesInSent是已报告给对端的)
+    int m_nBytesInSent;		// 已经用Acknowledgement(Message Type ID=3)Packet告知对端的 已接收字节数
     int m_nBufferMS;
     int m_stream_id;		/* returned in _result from createStream */
     int m_mediaChannel;
@@ -249,11 +249,12 @@ extern "C"
     uint32_t m_pauseStamp;
     int m_pausing;
     int m_nServerBW;
-    int m_nClientBW;
+    int m_nClientBW;		// 发送端在接收到接受端返回的两个ACK间最多可以发送的字节数
+    						// 被HandleClientBW RTMP_PACKET_TYPE_CLIENT_BW修改
     uint8_t m_nClientBW2;
     uint8_t m_bPlaying;
     uint8_t m_bSendEncoding;
-    uint8_t m_bSendCounter;
+    uint8_t m_bSendCounter; // 是否间隔('r->m_nClientBW/10'字节)发送 Acknowledgement(Message Type ID=3) 报告已接收的字节数
 
     int m_numInvokes;
     int m_numCalls;
@@ -267,7 +268,7 @@ extern "C"
 
     double m_fAudioCodecs;	/* audioCodecs for the connect packet */
     double m_fVideoCodecs;	/* videoCodecs for the connect packet */
-    double m_fEncoding;		/* AMF0 or AMF3 */
+    double m_fEncoding;		/* AMF0 or AMF3 编码方式 */
 
     double m_fDuration;		/* duration of stream in seconds */
 

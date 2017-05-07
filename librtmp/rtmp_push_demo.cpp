@@ -159,9 +159,12 @@ int rtmp_send_packet(uint32_t nPacketType,uint8_t *data,uint32_t size,uint32_t n
 	packet->m_nBodySize = size;
 	memcpy(packet->m_body,data,size);
 	packet->m_hasAbsTimestamp = 0;
-	packet->m_packetType = nPacketType; //audio or video packet type.
+	packet->m_packetType = nPacketType; //audio or video packet type. 
+	// packetType 就是Stream Type ID 
+	// #define RTMP_PACKET_TYPE_AUDIO              0x08
+	// #define RTMP_PACKET_TYPE_VIDEO              0x09
 	packet->m_nInfoField2 = rtmp_push.rtmp->m_stream_id;
-	packet->m_nChannel = 0x04;
+	packet->m_nChannel = 0x04; // 目前数据通道都是固定的 0x04 命令通道是0x03
 
 	packet->m_headerType = RTMP_PACKET_SIZE_LARGE;
 	if (RTMP_PACKET_TYPE_AUDIO == nPacketType && size !=4)

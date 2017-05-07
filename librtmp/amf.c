@@ -203,8 +203,8 @@ AMF_EncodeNumber(char *output, char *outend, double dVal)
 
   *output++ = AMF_NUMBER;	/* type: Number */
 
-#if __FLOAT_WORD_ORDER == __BYTE_ORDER
-#if __BYTE_ORDER == __BIG_ENDIAN
+#if __FLOAT_WORD_ORDER == __BYTE_ORDER // word序和byte序一样
+#if __BYTE_ORDER == __BIG_ENDIAN	   // word序 = 每4个字节组成word
   memcpy(output, &dVal, 8);
 #elif __BYTE_ORDER == __LITTLE_ENDIAN
   {
